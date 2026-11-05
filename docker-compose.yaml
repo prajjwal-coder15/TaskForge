@@ -1,0 +1,88 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taskforge-api
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-taskforge}:${POSTGRES_PASSWORD:-taskforge_dev_password}@postgres:5432/${POSTGRES_DB:-taskforge}?sslmode=disable"
+      REDIS_ADDR: "redis:6379"
+      PORT: "8080"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      JWT_ISSUER: ${JWT_ISSUER:-taskforge}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-taskforge-api}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - taskforge-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: taskforge-postgres
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-taskforge}"
+      POSTGRES_USER: "${POSTGRES_USER:-taskforge}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-taskforge_dev_password}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - taskforge-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: taskforge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - taskforge-network
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    container_name: taskforge-migrate
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database"
+      - "postgres://${POSTGRES_USER:-taskforge}:${POSTGRES_PASSWORD:-taskforge_dev_password}@postgres:5432/${POSTGRES_DB:-taskforge}?sslmode=disable"
+      - "up"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - taskforge-network
+    restart: "no"
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  taskforge-network:
+    driver: bridge
+
